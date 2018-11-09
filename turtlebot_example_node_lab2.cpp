@@ -29,8 +29,8 @@
 #include <tf/transform_datatypes.h>
 #include <tf/transform_broadcaster.h>
 
-#define M 50
-#define N 50
+#define M 300
+#define N 300
 #define RESOLUTION 0.11
 
 using namespace Eigen;
@@ -42,7 +42,6 @@ double ips_x;
 double ips_y;
 double ips_yaw;
 
-//boost::shared_ptr<sensor_msgs::LaserScan> scanner_msg;
 bool first_scan = true;
 bool first_pose = true;
 sensor_msgs::LaserScan scanner_msg;
@@ -71,17 +70,14 @@ void inversescannerbres(Vector3d &x, float phi, float range, std::vector<int> &l
 	if (std::isnan(range)) return;
 	auto angle = phi + x(2);
 	// Range finder inverse measurement model
-	int x1 = max(0.0, min((double)M, x(0)/RESOLUTION));
-	int y1 = max(0.0, min((double)N, x(1)/RESOLUTION));
+	// int x1 = max(0.0, min((double)M, x(0)/RESOLUTION));
+	int x1 = max(0.0, min((double)M-1, x(0)/RESOLUTION+M/2)); //Adding M/2 as an offset since the bottom left-hand corner is 0,0
+	int y1 = max(0.0, min((double)N-1, x(1)/RESOLUTION+N/2)); //Adding M/2 as an offset since the bottom left-hand corner is 0,0
 	auto endptx = (x(0) + range*cos(angle))/RESOLUTION;
 	auto endpty = (x(1) + range*sin(angle))/RESOLUTION;
 
-	int x2 = max(0.0, min((double)M, endptx));
-	int y2 = max(0.0, min((double)N, endpty));
-	//std::vector<int> linex;
-	//std::vector<int> liney;
-
-	//ROS_INFO("x1 = %d, y1 = %d, x2 = %d, y2 = %d ", x1, y1, x2, y2); 
+	int x2 = max(0.0, min((double)M-1, endptx)+M/2); //Adding M/2 as an offset since the bottom left-hand corner is 0,0
+	int y2 = max(0.0, min((double)N-1, endpty)+N/2); //Adding M/2 as an offset since the bottom left-hand corner is 0,0
 
 	bresenham(x1,y1,x2,y2, linex, liney);
 	//invmod.resize(linex.size(), 3);
@@ -93,17 +89,19 @@ void inversescannerbres(Vector3d &x, float phi, float range, std::vector<int> &l
 	//	ROS_INFO("ix = %f, iy = %f, range = %f, size = %lu\n", invmod(i,0),invmod(i,1), range, linex.size());
 	}
 	if (range < range_max){
-		//invmod(linex.size()-1, 2) = 0.6;
 		linepm[linex.size() - 1] = 0.6;
 	}
 }
 
 void map_update(Vector3d &x) {
-	//ROS_INFO("numRanges = %d\n", numRanges);
-	for (auto i = 0; i < numRanges; i++) { //i = 1:length(meas_phi){
-		// Get inverse measurement model
-		if (!(scanner_msg.ranges[i] < range_max && scanner_msg.ranges[i] > range_min)) {
-			//ROS_INFO("out of range (%f)\n", scanner_msg.ranges[i]);
+	for (auto i = 0; i < numRanges; i++) {
+		// // Get inverse measurement model
+		// if (!(scanner_msg.ranges[i] < range_max && scanner_msg.ranges[i] > range_min)) {
+		// 	//ROS_INFO("out of range (%f)\n", scanner_msg.ranges[i]);
+		// 	continue;
+		// }
+
+		if (std::isnan(scanner_msg.ranges[i])) {
 			continue;
 		}
 		/*if (scanner_msg.ranges[i] < range_min) {
@@ -130,32 +128,27 @@ void map_update(Vector3d &x) {
 
 //Callback function for the Position topic (SIMULATION)
 void pose_callback(const gazebo_msgs::ModelStates &msg) {
-
     int i;
     for (i = 0; i < msg.name.size(); i++)
         if (msg.name[i] == "mobile_base")
             break;
-
     ips_x = msg.pose[i].position.x;
     ips_y = msg.pose[i].position.y;
     ips_yaw = tf::getYaw(msg.pose[i].orientation);
 	if (first_pose) {
-		map_msg.info.origin.orientation = msg.pose[i].orientation;
+		//map_msg.info.origin.orientation = msg.pose[i].orientation;
 		first_pose = false;
 	}
 }
 
 void scan_callback(const sensor_msgs::LaserScan &msg) {
-	//ROS_INFO("numRanges = %d\n", sizeof(msg.ranges)/4);
 	//if (first_scan) {
-		//scanner_msg = msg;
 		angle_min = msg.angle_min;
 		angle_max = msg.angle_max;
 		angle_increment = msg.angle_increment;
 		range_min = msg.range_min;
 		range_max = msg.range_max;      	
 		numRanges = (angle_max-angle_min)/angle_increment;
-
 		// numRanges = sizeof(msg.ranges)/4;
 		first_scan = false;
 		//ROS_INFO("angle_min = %f, angle_max = %f, range_min = %f, range_max = %f\n", angle_min, angle_max, range_min, range_max);
@@ -163,8 +156,6 @@ void scan_callback(const sensor_msgs::LaserScan &msg) {
 		scanner_msg.ranges = msg.ranges;
 	//}
 }
-
-
 
 //Callback function for the Position topic (LIVE)
 /*
@@ -233,7 +224,7 @@ void bresenham(int x0, int y0, int x1, int y1, std::vector<int> &x, std::vector<
 
 int main(int argc, char **argv) {
     //Initialize the ROS framework
-    ros::init(argc, argv, "main_control");
+    ros::init(argc, argv, "main_mapping");
     ros::NodeHandle n;
 
     //Subscribe to the desired topics and assign callbacks
@@ -266,6 +257,7 @@ int main(int argc, char **argv) {
 	belief_map = MatrixXd::Zero(M,N);
 	std::vector<signed char> occupancy_grid(M*N);// = MatrixXd::Zero(M,N);
 	
+	map_msg.data.clear();
 	map_msg.header.frame_id = "map";
 	map_msg.info.map_load_time = ros::Time::now(); 
 	// map_msg.info.origin.position.x = X(0);
@@ -283,18 +275,19 @@ int main(int argc, char **argv) {
 	origin.position.x = -(M*RESOLUTION)/2.0;
 	origin.position.y = -(N*RESOLUTION)/2.0;
 	origin.position.z = 0; 
-	origin.orientation = tf::createQuaternionMsgFromRollPitchYaw(0,0,0);
 
+	origin.orientation.x = 0;
+	origin.orientation.y = 0;
+	origin.orientation.z = 0;
 	map_msg.info.origin = origin;
 	map_msg.data.resize(M*N);
+	map_publisher.publish(map_msg);
 
-	//first_msg = false;
 	while (ros::ok()) {
         //Main loop code goes here:
-        //vel.linear.x = 0.1;  // set linear speed
-        vel.linear.x = 0;
-        vel.angular.z = 0.5; // set angular speed
-        velocity_publisher.publish(vel); // Publish the command velocity
+        // vel.linear.x = 0;
+        // vel.angular.z = 0.5; // set angular speed
+        // velocity_publisher.publish(vel); // Publish the command velocity
         ros::spinOnce();   //Check for new messages
 		X << ips_x, ips_y, ips_yaw; 
 
@@ -305,21 +298,14 @@ int main(int argc, char **argv) {
 			for (auto j = 0; j < N; j++) {
 				occupancy_grid[i*N+j] = round( (exp(belief_map(i, j)) / (1.0 + exp(belief_map(i, j)))) * 100.0);
 				//ROS_INFO("Belief Map[%d, %d]: %f, ", i, j, belief_map(i,j)); 
-				//ROS_INFO("map[%d]: %d, " , i*N+j, occupancy_grid[i*N+j]);  
+				// ROS_INFO("map[%d]: %d, " , i*N+j, occupancy_grid[i*N+j]);  
 			}
 		}
 		map_msg.data = occupancy_grid;
 	//	ROS_INFO("map_msg[%d]: %d\n" , M*N-1, map_msg.data[M*N-1]);  
 		map_msg.info.map_load_time = ros::Time::now(); 
-		map_publisher.publish(map_msg);
-
-		transform.setOrigin(tf::Vector3(0,0,0));
-    	transform.setRotation(tf::Quaternion(0,0,0,1));
-    	br.sendTransform(tf::StampedTransform(transform,ros::Time::now(),"/map","base_link"));
-	
+		map_publisher.publish(map_msg);	
         loop_rate.sleep(); //Maintain the loop rate
     }
-
     return 0;
-
 }
