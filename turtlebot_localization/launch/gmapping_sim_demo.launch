@@ -1,0 +1,5 @@
+<launch>
+
+  <include file="$(find turtlebot_localization)/launch/gmapping.launch.xml"/>
+
+</launch>
