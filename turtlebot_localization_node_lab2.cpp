@@ -73,6 +73,9 @@ Vector3d y;
 double dt_odom = 0.05;
 //double w[NUM_PARTICLES] = {0};
 //double wsum[NUM_PARTICLES] = {0};
+std::random_device rd;  //Will be used to obtain a seed for the random number engine
+std::mt19937 gen(rd()); //Standard mersenne_twister_engine seeded with rd()
+std::uniform_real_distribution<> dis(0.0, 1.0);
 
 boost::variate_generator<boost::mt19937, boost::normal_distribution<double>>
 							generator(boost::mt19937(time(0)), boost::normal_distribution<>(0.0, 1.0));
@@ -81,8 +84,8 @@ geometry_msgs::TwistWithCovariance odom_twist;
 geometry_msgs::PoseWithCovariance odom_pose;
 
 //Callback function for the Position topic (SIMULATION)
-//void pose_callback(const gazebo_msgs::ModelStates &msg);
-void pose_callback(const geometry_msgs::PoseWithCovarianceStamped& msg);
+void pose_callback(const gazebo_msgs::ModelStates &msg);
+//void pose_callback(const geometry_msgs::PoseWithCovarianceStamped& msg);
 void odom_callback(const nav_msgs::Odometry &msg);
 void state_prediction(double dt);
 void state_belief_update();
@@ -103,13 +106,13 @@ int main(int argc, char **argv) {
 	//gen.seed(rd());
 
     //Subscribe to the desired topics and assign callbacks
-    ros::Subscriber pose_sub = n.subscribe("/indoor_pos", 1, pose_callback);
+    ros::Subscriber pose_sub = n.subscribe("/gazebo/model_states", 5, pose_callback);
 
 	// Subscribe to Odometry info
-	ros::Subscriber odm = n.subscribe("/odom", 1, odom_callback);
+	ros::Subscriber odm = n.subscribe("/odom", 5, odom_callback);
 
     //Setup topics to Publish from this node
-    ros::Publisher velocity_publisher = n.advertise<geometry_msgs::Twist>("/cmd_vel_mux/input/navi", 1);
+    //ros::Publisher velocity_publisher = n.advertise<geometry_msgs::Twist>("/cmd_vel_mux/input/navi", 1);
     pose_publisher = n.advertise<geometry_msgs::PoseStamped>("/pose", 1, true);
 
 	// Particle Filter Publishing
@@ -153,7 +156,8 @@ int main(int argc, char **argv) {
 void pose_estimate_publisher(const ros::Time &t) {
 	geometry_msgs::PoseStamped pose;
 	nav_msgs::Path path;
-	path.header.stamp = t; path.header.frame_id = FRAME_ID;
+	path.header.stamp = t;
+	path.header.frame_id = FRAME_ID;
 	pose.header.stamp = t;
 	pose.header.frame_id = FRAME_ID;
 	pose.pose.position.x = pose_estimate(0);
@@ -270,8 +274,9 @@ void state_prediction(double dt){
 
 void state_belief_update(){
 	for (auto m = 0; m < NUM_PARTICLES; m++) {
-		MatrixXd::Index maxCol;
-		auto seed = wsum.maxCoeff(&maxCol)*generator();
+		//MatrixXd::Index maxCol;
+		//auto seed = wsum.maxCoeff(&maxCol)*generator();
+		auto seed = wsum(NUM_PARTICLES-1)*dis(gen);
 		//ROS_INFO("seed = %f\n", seed);
 		for (auto i = 0; i < NUM_PARTICLES; i++){
 			if (wsum(i) > seed){ 
