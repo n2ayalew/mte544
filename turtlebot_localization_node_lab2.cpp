@@ -108,7 +108,7 @@ int main(int argc, char **argv) {
 	//gen.seed(rd());
 
     //Subscribe to the desired topics and assign callbacks
-    ros::Subscriber pose_sub = n.subscribe("/gazebo/model_states", 5, pose_callback);
+    ros::Subscriber pose_sub = n.subscribe("/gazebo/model_states_throttle", 5, pose_callback);
 
 	// Subscribe to Odometry info
 	ros::Subscriber odm = n.subscribe("/odom", 5, odom_callback);
@@ -207,8 +207,8 @@ void robot_point_publisher(const ros::Time &t) {
 	points.id = 0;
 	points.type = visualization_msgs::Marker::POINTS;
 	points.pose.orientation.w = 1.0;
-	points.scale.x = 0.3;
-	points.scale.y = 0.3;
+	points.scale.x = 0.2;
+	points.scale.y = 0.2;
 	points.color.r = 1.0f;
 	points.color.a = 1.0;
 
@@ -255,7 +255,7 @@ void odom_callback(const nav_msgs::Odometry &msg) {
 	last_odom_time = msg.header.stamp.nsec;
 }
 
-// down sample pose: rosrun throttle messages pose 1.0
+//down sample pose: rosrun throttle messages pose 1.0
 //Callback function for the Position topic (LIVE)
 
 void pose_callback(const geometry_msgs::PoseWithCovarianceStamped& msg)
@@ -275,6 +275,9 @@ void pose_callback(const geometry_msgs::PoseWithCovarianceStamped& msg)
 		xbelief.row(2) = ((xbelief.row(2).array()) + ips_yaw).matrix();
 		xpredict = xbelief;
 	}
+	auto t1 = ros::Time::now();
+	robot_point_publisher(t1);
+
 }
 
 void state_prediction(double dt){
@@ -302,7 +305,7 @@ void state_prediction(double dt){
 			xpredict(2,m) += 2*M_PI;
 		}
 
-		w(m) = mvnpdf(y, xpredict.col(m), Q); 
+		w(m) = mvnpdf(y, xpredict.col(m)); 
 		//ROS_INFO("w(m) = %f", w(m));
 		//ROS_INFO("w(m) = %f, xpredict(m) = (%f, %f, %f), y = (%f, %f, %f)\n", w(m), xpredict(0,m), xpredict(1,m), xpredict(2,m), y(0), y(1), y(2));
 		if (m > 0 ) {
@@ -318,12 +321,16 @@ void state_belief_update(){
 		//MatrixXd::Index maxCol;
 		//auto seed = wsum.maxCoeff(&maxCol)*generator();
 		auto seed = wsum(NUM_PARTICLES-1)*dis(gen);
-		//ROS_INFO("seed = %f\n", seed);
+		auto updated = false;
 		for (auto i = 0; i < NUM_PARTICLES; i++){
 			if (wsum(i) > seed){ 
 				xbelief.col(m) = xpredict.col(i);
+				updated = true;
 				break;
 			}
+		}
+		if (!updated) {
+			xbelief.col(m) = xpredict.col(m);
 		}
 	}
 	 
@@ -345,7 +352,7 @@ void state_estimation(ros::Time t1){
 
 
  // Taken out b/c inefficent
-double mvnpdf(const VectorXd &x, const VectorXd &meanVec, const MatrixXd &covMat)
+/*double mvnpdf(const VectorXd &x, const VectorXd &meanVec, const MatrixXd &covMat)
 {
 	// avoid magic numbers in your code. Compilers will be able to compute this at compile time:
 	const double logSqrt2Pi = 0.5*std::log(2*M_PI);
@@ -358,8 +365,8 @@ double mvnpdf(const VectorXd &x, const VectorXd &meanVec, const MatrixXd &covMat
 	//ROS_INFO("quadform = %f, L.determinant = %f\n", quadform, L.determinant());
 	return std::exp(-x.rows()*logSqrt2Pi - 0.5*quadform) / L.determinant();
 }
+*/
 
-/*
 double mvnpdf(const Eigen::VectorXd &Y, const Eigen::VectorXd &Xp){// , const Eigen::MatrixXd &covMat, const Eigen::MatrixXd &covMat) {
 	//const double q_det = std::pow(std::pow(MEASURMENT_NOISE,2)*2*M_PI, 3);
 	const double q_det = std::pow(MEASURMENT_NOISE*MEASURMENT_NOISE*2*M_PI, 3);
@@ -369,4 +376,4 @@ double mvnpdf(const Eigen::VectorXd &Y, const Eigen::VectorXd &Xp){// , const Ei
 	//ROS_INFO("q_det = %f, normalizer = %f\n", q_det, normalizer);
 	return normalizer * std::exp(-0.5*quadform);
 }
-*/
+
