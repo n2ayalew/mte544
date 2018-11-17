@@ -13,6 +13,7 @@
 #include <nav_msgs/Odometry.h>
 #include <nav_msgs/Path.h>
 #include <std_msgs/String.h>
+#include <ros/console.h>
 
 //#include <boost/math/distributions/normal.hpp> // for normal_distribution
 #include <boost/random.hpp>
@@ -91,6 +92,7 @@ void state_prediction(double dt);
 void state_belief_update();
 void state_estimation(ros::Time t1);
 void point_publisher(const ros::Time &t);
+void robot_point_publisher(const ros::Time &t);
 void pose_estimate_publisher(const ros::Time &t);
 double mvnpdf(const Eigen::VectorXd &x, const Eigen::VectorXd &meanVec, const Eigen::MatrixXd &covMat);
 double mvnpdf(const Eigen::VectorXd &Y, const Eigen::VectorXd &Xp);//, const Eigen::MatrixXd &covMat, const Eigen::MatrixXd &covMat);
@@ -178,8 +180,8 @@ void point_publisher(const ros::Time &t) {
 	points.id = 0;
 	points.type = visualization_msgs::Marker::POINTS;
 	points.pose.orientation.w = 1.0;
-	points.scale.x = 0.2;
-	points.scale.y = 0.2;
+	points.scale.x = 0.1;
+	points.scale.y = 0.1;
 	points.color.g = 1.0f;
 	points.color.a = 1.0;
 
@@ -190,11 +192,33 @@ void point_publisher(const ros::Time &t) {
 		p.z = 0;
 		points.points.push_back(p);
 	}
+
+//	ROS_INFO_STREAM("x is " << xbelief(0,50) << " and y is " << xbelief(1,50) );
 	marker_pub.publish(points);
 }
 
 // down sample pose: rosrun throttle messages gazebo/model_states 1.0
+void robot_point_publisher(const ros::Time &t) {
+	visualization_msgs::Marker points;
+	points.header.stamp = t;
+	points.header.frame_id = FRAME_ID;
+	points.ns = "bot_points";
+	points.action = visualization_msgs::Marker::ADD;
+	points.id = 0;
+	points.type = visualization_msgs::Marker::POINTS;
+	points.pose.orientation.w = 1.0;
+	points.scale.x = 0.3;
+	points.scale.y = 0.3;
+	points.color.r = 1.0f;
+	points.color.a = 1.0;
 
+	geometry_msgs::Point p;
+	p.x = ips_x;
+	p.y = ips_y;
+	p.z = 0;
+	points.points.push_back(p);
+	marker_pub.publish(points);
+}
 void pose_callback(const gazebo_msgs::ModelStates &msg) {
 	int i;
     for (i = 0; i < msg.name.size(); i++)
@@ -204,7 +228,11 @@ void pose_callback(const gazebo_msgs::ModelStates &msg) {
 	ips_x = msg.pose[i].position.x;
     ips_y = msg.pose[i].position.y;
     ips_yaw = tf::getYaw(msg.pose[i].orientation);
+	/*if(ips_yaw<0) {
+		ips_yaw = ips_yaw + 2*M_PI;
+	}*/
 	y << ips_x, ips_y, ips_yaw;
+
 	if (first_pose) {
 		first_pose = false;
 		xbelief.row(0) = ((xbelief.row(0).array()) + ips_x).matrix();
@@ -212,6 +240,8 @@ void pose_callback(const gazebo_msgs::ModelStates &msg) {
 		xbelief.row(2) = ((xbelief.row(2).array()) + ips_yaw).matrix();
 		xpredict = xbelief;
 	}
+	auto t1 = ros::Time::now();
+	robot_point_publisher(t1);
 }
 
 
@@ -233,6 +263,9 @@ void pose_callback(const geometry_msgs::PoseWithCovarianceStamped& msg)
 	ips_x = msg.pose.pose.position.x; // Robot X psotition
 	ips_y = msg.pose.pose.position.y; // Robot Y psotition
 	ips_yaw = tf::getYaw(msg.pose.pose.orientation); // Robot Yaw
+	/*if(ips_yaw<0) {
+		ips_yaw = ips_yaw + 2*M_PI;
+	}*/
 	//Q << msp.covariance[0], 0, 0, 0, msp.covariance[8], 0, 0, 0, msp.covariance[35];
 	y << ips_x, ips_y, ips_yaw;
 	if (first_pose) {
@@ -258,10 +291,18 @@ void state_prediction(double dt){
 	y = y + d;
 	for (auto m = 0; m < NUM_PARTICLES; m++) {
 		randVector << generator() , generator() , generator();
-		rotation_matrix << std::cos(xbelief(2,m)), -std::sin(xbelief(2,m)), 0, std::sin(xbelief(2,m)), std::cos(xbelief(2,m)), 0, 0, 0, 1; // body to inertial F.O.R 
-		//rotation_matrix << std::cos(xbelief(2,m)), 0, 0, 0, std::sin(xbelief(2,m)), 0, 0, 0, 1; // body to inertial F.O.R
+		
+		//rotation_matrix << std::cos(xbelief(2,m)), -std::sin(xbelief(2,m)), 0, std::sin(xbelief(2,m)), std::cos(xbelief(2,m)), 0, 0, 0, 1; // body to inertial F.O.R 
+		rotation_matrix << std::cos(xbelief(2,m)), 0, 0, 0, std::sin(xbelief(2,m)), 0, 0, 0, 1; // body to inertial F.O.R
 		xpredict.col(m) = xbelief.col(m) + rotation_matrix*(u*dt_odom) + R*randVector;
-		w(m) = mvnpdf(y, xpredict.col(m));//, Q); 
+		if (xpredict(2,m) > M_PI) {
+			xpredict(2,m) += -2*M_PI;
+		}
+		if (xpredict(2,m) < -M_PI) {
+			xpredict(2,m) += 2*M_PI;
+		}
+
+		w(m) = mvnpdf(y, xpredict.col(m), Q); 
 		//ROS_INFO("w(m) = %f", w(m));
 		//ROS_INFO("w(m) = %f, xpredict(m) = (%f, %f, %f), y = (%f, %f, %f)\n", w(m), xpredict(0,m), xpredict(1,m), xpredict(2,m), y(0), y(1), y(2));
 		if (m > 0 ) {
@@ -302,7 +343,7 @@ void state_estimation(ros::Time t1){
 	//pose_var(2) = xbelief.row(2).mean();
 }
 
-/*
+
  // Taken out b/c inefficent
 double mvnpdf(const VectorXd &x, const VectorXd &meanVec, const MatrixXd &covMat)
 {
@@ -317,14 +358,15 @@ double mvnpdf(const VectorXd &x, const VectorXd &meanVec, const MatrixXd &covMat
 	//ROS_INFO("quadform = %f, L.determinant = %f\n", quadform, L.determinant());
 	return std::exp(-x.rows()*logSqrt2Pi - 0.5*quadform) / L.determinant();
 }
-*/
 
+/*
 double mvnpdf(const Eigen::VectorXd &Y, const Eigen::VectorXd &Xp){// , const Eigen::MatrixXd &covMat, const Eigen::MatrixXd &covMat) {
-	const double q_det = std::pow(std::pow(MEASURMENT_NOISE,2)*2*M_PI, 3);
+	//const double q_det = std::pow(std::pow(MEASURMENT_NOISE,2)*2*M_PI, 3);
+	const double q_det = std::pow(MEASURMENT_NOISE*MEASURMENT_NOISE*2*M_PI, 3);
 	const double normalizer = std::pow(q_det, -0.5);
 	double quadform = ((Y - Xp).transpose() * Qinv) * (Y - Xp);
 	//ROS_INFO("quadform = %f, q_det = %f, normalizer = %f\n", quadform, q_det, normalizer);
 	//ROS_INFO("q_det = %f, normalizer = %f\n", q_det, normalizer);
 	return normalizer * std::exp(-0.5*quadform);
 }
-
+*/
