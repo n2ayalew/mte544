@@ -20,6 +20,7 @@
 #include <eigen3/Eigen/Dense>
 
 #include <algorithm>
+#include <utility>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -36,7 +37,7 @@ double number = distribution(generator); //get random number
 #define TAGID 0
 #define NUM_SAMPLES 1000
 #define OCCUPIED_THRESHOLD 1
-#define NEAREST_EDGES 8
+#define NEAREST_MS 8
 
 using namespace Eigen;
 
@@ -69,8 +70,10 @@ pose_t wp1 = {4.0, 0.0, 0.0};
 pose_t wp2 = {8.0, -4.0, 3.14};
 pose_t wp3 = {8.0, 0.0, -1.57};
 
-//Callback function for the Position topic (LIVE)
+double getDist(double x0, double y0, double x1, double y1) {return std::sqrt( std::pow(y1-y0,2) + pow(x1-x0,2));}
+double getDist(pose_t p0, pose_t p1) {return std::sqrt( std::pow(p1.y-p0.y,2) + pow(p1.x-p0.x,2));}
 
+//Callback function for the Position topic (LIVE)
 void pose_callback(const geometry_msgs::PoseWithCovarianceStamped & msg)
 {
 	//This function is called when a new position message is received
@@ -140,8 +143,8 @@ void map_callback(const nav_msgs::OccupancyGrid& msg)
 	mapRecieved = true;
 }
 
-
 void prm(ros::Rate &loop_rate) {
+
 
 	// Waits for map to be recieved
 	while (ros::ok() && !mapRecieved) {
@@ -176,12 +179,42 @@ void prm(ros::Rate &loop_rate) {
 
 	ROS_INFO_STREAM("Number of milestone: " << milestones.size() << "\n");
 
-	// - Find closest milestones
+	/**
+	 * nnHeap vector
+	 *
+	 * Stores the smallest distances and corresponding indices within the milestones array
+	 *
+	 * for milestone i:
+	 * 		nnHeap[j].first - distance of jth nearest milestone
+	 * 		nnHeap[j].second - index in milestones array for jth nearest milestone
+	 **/
+
+	std::vector<std::pair<double, int>> nnHeap; // max heap used for only keeping edges connected to nearest neighbours
+	auto nM = milestones.size();
+	double d = 0;
+	for (auto i = 0; i < nM; i++) {
+		nnHeap.clear();
+		for (auto j = 0; j < nM; j++) {
+			d = getDist(milestones[i], milestones[j]);
+			if (nnHeap.size() < NEAREST_MS && j != i) {
+				nnHeap.push_back(std::make_pair(d, j));
+				if (nnHeap.size() == NEAREST_MS) std::make_heap(nnHeap.begin(), nnHeap.end());
+			} else if (j != i && d < nnHeap[0].first) {
+				std::pop_heap(nnHeap.begin(), nnHeap.end());
+				nnHeap.pop_back();
+				nnHeap.push_back(std::make_pair(d, j));
+				std::push_heap(nnHeap.begin(), nnHeap.end());
+			}
+		}
+    	//std::sort_heap(nnHeap.begin(), nnHeap.end());
+	       
+	// - Find closest milestones -- DONE
 	// 		- Check if edge collides with any obstacles
 	// 		- Only keep edges that are in collision free zones
 	// 		- Put collision free edges in graph 2d array
 
 
+	}
 	// Find shortest path from edges and milestones objects
 }
 
