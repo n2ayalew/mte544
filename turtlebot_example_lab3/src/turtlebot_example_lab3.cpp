@@ -19,6 +19,7 @@
 #include <geometry_msgs/PoseWithCovarianceStamped.h>
 #include <eigen3/Eigen/Dense>
 
+#include <algorithm>
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
@@ -58,10 +59,12 @@ ros::Publisher marker_pub;
 bool mapRecieved = false;
 char **occupancyGrid; // map represented as occupancy probabilities between 0-100
 char **edges; // stores unwieghted graph
-mapData_t mapInfo;
+mapData_t mapInfo; // map meta data
 MatrixXd mapSamples; // random samples in map
-Vector3d X;
+Vector3d X; // pose
 std::vector<pose_t> milestones;
+
+// Hardcoded waypoints
 pose_t wp1 = {4.0, 0.0, 0.0};
 pose_t wp2 = {8.0, -4.0, 3.14};
 pose_t wp3 = {8.0, 0.0, -1.57};
@@ -146,7 +149,8 @@ void prm(ros::Rate &loop_rate) {
 		ros::spinOnce();
 	}
 
-	ROS_INFO_STREAM("Map Recieved\n");
+	ROS_INFO_STREAM("Map Recieved: height = " << mapInfo.h << " width = " << mapInfo.w << " res = " << mapInfo.res <<
+					" origin = (" << mapInfo.origin.x << ", " << mapInfo.origin.y << ", " << mapInfo.origin.theta << ")\n");
 
 	// Samples random configurations and stores collision free ones in milestones vector
 	mapSamples = MatrixXd::Random(NUM_SAMPLES, 2 /* (x, y) samples */);
@@ -156,18 +160,21 @@ void prm(ros::Rate &loop_rate) {
 	milestones.push_back(wp3);
  	MatrixXf::Index maxRow, maxCol;
 	double maxC = mapSamples.maxCoeff(&maxRow, &maxCol);
+
 	for (auto i = 0; i < NUM_SAMPLES; i++) {
-		//mapSamples(i,0) = fabs(mapSamples(i,0)) * mapInfo.h;
-		mapSamples(i,0) = (mapSamples(i,0)/maxC) * mapInfo.h;
-		//mapSamples(i,1) = fabs(mapSamples(i,1)) * mapInfo.w;
-		mapSamples(i,1) = (mapSamples(i,1)/maxC) * mapInfo.w;
-		//ROS_INFO_STREAM("xsample "<< mapSamples(i,0) << mapSamples(i,1) <<  "\n");
-		int xSample = ((int)round(fabs(mapSamples(i,0))) >= mapInfo.h) ? mapInfo.h - 1 : (int)round(fabs(mapSamples(i,0)));
-		int ySample = ((int)round(fabs(mapSamples(i,1))) >= mapInfo.w) ? mapInfo.w - 1 : (int)round(fabs(mapSamples(i,1)));
-		if (occupancyGrid[xSample][ySample] < OCCUPIED_THRESHOLD) {
-			milestones.push_back({mapSamples(i, 0) * mapInfo.res, mapSamples(i, 1) * mapInfo.res, 0});
+		mapSamples(i,0) = (mapSamples(i,0) + 1) * (mapInfo.w/2.0);
+		mapSamples(i,1) = (mapSamples(i,1) + 1) * (mapInfo.h/2.0);
+		auto xSample = ((int)round(mapSamples(i,0)) >= mapInfo.w) ? mapInfo.w - 1 : (int)round(mapSamples(i,0));
+		auto ySample = ((int)round(mapSamples(i,1)) >= mapInfo.h) ? mapInfo.h - 1 : (int)round(mapSamples(i,1));
+		//ROS_INFO_STREAM("grid values (" << occupancyGrid[xSample][ySample] << ")\n");
+		if (!occupancyGrid[ySample][xSample]) {
+			auto tfY = (double)((ySample + mapInfo.origin.y/mapInfo.res) * mapInfo.res); 
+			auto tfX = (double)((xSample + mapInfo.origin.x/mapInfo.res) * mapInfo.res); 
+			milestones.push_back({tfX, tfY, 0});
 		}
 	}
+
+	ROS_INFO_STREAM("Number of milestone: " << milestones.size() << "\n");
 
 	// - Find closest milestones
 	// 		- Check if edge collides with any obstacles
@@ -182,13 +189,13 @@ void point_publisher() {
 	visualization_msgs::Marker points;
 	points.header.stamp = ros::Time::now();
 	points.header.frame_id = "/map";
-	points.ns = "turtle_points";
+	points.ns = "milestones";
 	points.action = visualization_msgs::Marker::ADD;
 	points.id = 0;
 	points.type = visualization_msgs::Marker::POINTS;
 	points.pose.orientation.w = 1.0;
-	points.scale.x = 0.2;
-	points.scale.y = 0.2;
+	points.scale.x = 0.1;
+	points.scale.y = 0.1;
 	points.color.g = 1.0f;
 	points.color.a = 1.0;
 
@@ -228,6 +235,9 @@ int main(int argc, char **argv)
     {
     	loop_rate.sleep(); //Maintain the loop rate
     	ros::spinOnce();   //Check for new messages
+
+
+		// Comment this line out if you don't want milestones showing on Rviz
 		point_publisher();
 
 		//Draw Curves
@@ -236,10 +246,10 @@ int main(int argc, char **argv)
         drawCurve(4);
     
     	//Main loop code goes here:
-    	vel.linear.x = 0.1; // set linear speed
-    	vel.angular.z = 0.3; // set angular speed
+    	//vel.linear.x = 0.1; // set linear speed
+    	//vel.angular.z = 0.3; // set angular speed
 
-    	velocity_publisher.publish(vel); // Publish the command velocity
+    	//velocity_publisher.publish(vel); // Publish the command velocity
     }
 
     return 0;
