@@ -73,7 +73,8 @@ void path_store(VectorXd &parent, VectorXd &path, int j, int index) {
   }
   path_store(parent, path, parent(j), index);
   path(index) = parent(j);
-  ROS_INFO("%d ", j);
+  ROS_INFO("Index: %d", index);
+  ROS_INFO("%f ", path(index));
 }
 
 VectorXd dijkstra(MatrixXd graph, int src, int n) 
@@ -87,7 +88,7 @@ VectorXd dijkstra(MatrixXd graph, int src, int n)
   
     // Parent array to store shortest path tree 
     VectorXd parent(n);   
-    VectorXd path;
+    VectorXd path(n);
   
     // Initialize all distances as INFINITE and stpSet[] as false
     parent(src) = -1; 
@@ -134,10 +135,12 @@ VectorXd dijkstra(MatrixXd graph, int src, int n)
   int path_index = 0;
   for (int i = 1; i < n; i++) {
     path_store(parent,path,i,path_index);
+    // ROS_INFO("%d -> %d \t %d\t\t%d ", src, i, dist[i], src);
+    ROS_INFO("Path Index: %d, Path: %f", path_index, path(path_index));
     path_index++;
   }
 
-  printSolution(dist, n, parent, src); 
+  // printSolution(dist, n, parent, src); 
   return path;
 }
 
