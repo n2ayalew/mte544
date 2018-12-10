@@ -20,9 +20,13 @@
 #include <eigen3/Eigen/Dense>
 
 #include <algorithm>
-#include <math.h>
+#include <utility>
+#include <vector>
+#include <cmath>
 #include <stdint.h>
 #include <stdlib.h>
+
+#include "shortestpath.cpp"
 
 /** Example usage of std::normal_distribution
 #define MEAN 10.0
@@ -36,7 +40,7 @@ double number = distribution(generator); //get random number
 #define TAGID 0
 #define NUM_SAMPLES 1000
 #define OCCUPIED_THRESHOLD 1
-#define NEAREST_EDGES 8
+#define NEAREST_MS 8
 
 using namespace Eigen;
 
@@ -58,19 +62,30 @@ typedef struct mapData {
 ros::Publisher marker_pub;
 bool mapRecieved = false;
 char **occupancyGrid; // map represented as occupancy probabilities between 0-100
-char **edges; // stores unwieghted graph
+//std::vector<std::vector<unsigned char>> edges; // unwieghted graph
+MatrixXi edges;
 mapData_t mapInfo; // map meta data
 MatrixXd mapSamples; // random samples in map
 Vector3d X; // pose
 std::vector<pose_t> milestones;
+MatrixXd ms; // matrix for milestones
+VectorXd sp;
 
 // Hardcoded waypoints
 pose_t wp1 = {4.0, 0.0, 0.0};
 pose_t wp2 = {8.0, -4.0, 3.14};
 pose_t wp3 = {8.0, 0.0, -1.57};
 
-//Callback function for the Position topic (LIVE)
+//bool edge_collision(int x0, int y0, int x1, int y1);
+bool edge_collision(double x0, double y0, double x1, double y1);
+void bresenham(int x0, int y0, int x1, int y1, std::vector<int> &x, std::vector<int> &y);
+VectorXd shortestpath(MatrixXi edges, int start, int finish);
 
+short sgn(int x) { return x >= 0 ? 1 : -1; }
+double getDist(double x0, double y0, double x1, double y1) {return std::sqrt( std::pow(y1-y0,2) + pow(x1-x0,2));}
+double getDist(pose_t p0, pose_t p1) {return std::sqrt( std::pow(p1.y-p0.y,2) + pow(p1.x-p0.x,2));}
+
+//Callback function for the Position topic (LIVE)
 void pose_callback(const geometry_msgs::PoseWithCovarianceStamped & msg)
 {
 	//This function is called when a new position message is received
@@ -131,17 +146,19 @@ void map_callback(const nav_msgs::OccupancyGrid& msg)
 	mapInfo.h = msg.info.height;
 	mapInfo.origin.x = msg.info.origin.position.x;
 	mapInfo.origin.y = msg.info.origin.position.y;
- 	mapInfo.origin.theta = tf::getYaw(msg.info.origin.orientation); // map's euler yaw
+	mapInfo.origin.theta = tf::getYaw(msg.info.origin.orientation);
 	occupancyGrid = (char**)malloc(mapInfo.h*sizeof(char*));
+
 	for (auto i = 0; i < mapInfo.h; i++) {
 		occupancyGrid[i] = (char*)malloc(mapInfo.w);
 		memcpy(occupancyGrid[i], &msg.data[i*mapInfo.w], mapInfo.w);
 	}
+
 	mapRecieved = true;
 }
 
-
 void prm(ros::Rate &loop_rate) {
+
 
 	// Waits for map to be recieved
 	while (ros::ok() && !mapRecieved) {
@@ -176,13 +193,67 @@ void prm(ros::Rate &loop_rate) {
 
 	ROS_INFO_STREAM("Number of milestone: " << milestones.size() << "\n");
 
-	// - Find closest milestones
+	/**
+	 * nnHeap vector
+	 *
+	 * Stores the smallest distances and corresponding indices within the milestones array
+	 *
+	 * for milestone i:
+	 * 		nnHeap[j].first - distance of jth nearest milestone
+	 * 		nnHeap[j].second - index in milestones array for jth nearest milestone
+	 **/
+
+	std::vector<std::pair<double, int>> nnHeap; // max heap used for only keeping edges connected to nearest neighbours
+	auto nM = milestones.size();
+	double d = 0;
+	edges = MatrixXi::Zero(nM, nM);
+	//edges.resize(nM, std::vector<unsigned char>(nM, 0));
+	//std::vector<std::vector<unsigned char>> edges;
+	//edges_ptr = edges;
+	//edges.assign(nM, std::vector<unsigned char>(nM, 0));
+	for (auto i = 0; i < nM; i++) {
+		nnHeap.clear();
+		for (auto j = 0; j < nM; j++) {
+			d = getDist(milestones[i], milestones[j]);
+			if (nnHeap.size() < NEAREST_MS && j != i) {
+				nnHeap.push_back(std::make_pair(d, j));
+				if (nnHeap.size() == NEAREST_MS) std::make_heap(nnHeap.begin(), nnHeap.end());
+			} else if (j != i && d < nnHeap[0].first) {
+				std::pop_heap(nnHeap.begin(), nnHeap.end());
+				nnHeap.pop_back();
+				nnHeap.push_back(std::make_pair(d, j));
+				std::push_heap(nnHeap.begin(), nnHeap.end());
+			}
+		}
+    	std::sort_heap(nnHeap.begin(), nnHeap.end());
+
+	// - Find closest milestones -- DONE
 	// 		- Check if edge collides with any obstacles
 	// 		- Only keep edges that are in collision free zones
 	// 		- Put collision free edges in graph 2d array
 
+		for (auto j = 0; j < nnHeap.size(); j++) {
+			if ((i < nnHeap[j].second) ) {
+				if (!(edge_collision(milestones[i].x, milestones[i].y, milestones[nnHeap[j].second].x, milestones[nnHeap[j].second].y) ) ) {
+					edges(i, j) = 1;
+					edges(j, i) = 1;	
+				}
+			}	
+		}
 
+	}
+	
 	// Find shortest path from edges and milestones objects
+	auto sp1 = shortestpath(edges, 0, 1);
+	auto sp2 = shortestpath(edges, 1, 2);
+	auto sp3 = shortestpath(edges, 2, 3);
+	sp = VectorXd::Zero(sp1.rows()+ sp2.rows()+ sp3.rows());
+	sp << sp1, sp2, sp3;
+	ROS_INFO_STREAM("Final Path: ");
+	for (auto i = 0; i < sp.rows(); i++) {
+		ROS_INFO_STREAM(sp(i) << ", ");
+	}
+	ROS_INFO_STREAM("\n");
 }
 
 void point_publisher() {
@@ -253,4 +324,91 @@ int main(int argc, char **argv)
     }
 
     return 0;
+}
+
+
+//function to detect collision 
+// x0 y0 is the starting points and x1 and y1 are the end points
+//will return true if collision is detected
+bool edge_collision(double x0, double y0, double x1, double y1) {
+  std::vector<int> x;
+  std::vector<int> y;
+  auto x0i = (int)round((x0-mapInfo.origin.x)/mapInfo.res);
+  auto y0i = (int)round((y0-mapInfo.origin.y)/mapInfo.res);
+  auto x1i = (int)round((x1-mapInfo.origin.x)/mapInfo.res);
+  auto y1i = (int)round((y1-mapInfo.origin.y)/mapInfo.res);
+
+//	ROS_INFO("start X AND start  Y IS %f and %f, end x and y are %f and %f ",x0,y0,x1,y1);
+  bresenham(x0i, y0i, x1i, y1i, x, y);
+  for (auto i = 0; i < x.size(); i++) {
+	  //ROS_INFO("X AND Y IS %d and %d ",x[i],y[i]);
+    if (occupancyGrid[y[i]][x[i]]) {
+      return true;
+    }
+  }
+  return false;
+
+}
+
+//Bresenham line algorithm (pass empty vectors)
+// Usage: (x0, y0) is the first point and (x1, y1) is the second point. The calculated
+//        points (x, y) are stored in the x and y vector. x and y should be empty
+//	  vectors of integers and shold be defined where this function is called from.
+void bresenham(int x0, int y0, int x1, int y1, std::vector<int> &x, std::vector<int> &y) {
+
+    int dx = abs(x1 - x0);
+    int dy = abs(y1 - y0);
+    int dx2 = x1 - x0;
+    int dy2 = y1 - y0;
+
+    const bool s = abs(dy) > abs(dx);
+
+    if (s) {
+        int dx2 = dx;
+        dx = dy;
+        dy = dx2;
+    }
+
+    int inc1 = 2 * dy;
+    int d = inc1 - dx;
+    int inc2 = d - dx;
+
+    x.push_back(x0);
+    y.push_back(y0);
+
+    while (x0 != x1 || y0 != y1) {
+        if (s)
+            y0 += sgn(dy2);
+        else
+            x0 += sgn(dx2);
+        if (d < 0)
+            d += inc1;
+        else {
+            d += inc2;
+            if (s)
+                x0 += sgn(dx2);
+            else
+                y0 += sgn(dy2);
+        }
+
+        //Add point to vector
+        x.push_back(x0);
+        y.push_back(y0);
+    }
+}
+
+VectorXd shortestpath(MatrixXi edges, int start, int finish){
+	//int n = nodes.rows();
+	auto n = milestones.size();
+	MatrixXd dists = VectorXd::Zero(n,n);
+	int count = 0;
+	for(int i = 0; i < n; i++){
+		for(int j = i; j < n; j++){ 
+			if (edges(i,j)) {
+				dists(i,j) = getDist(milestones[i], milestones[j]); //len(nodes,i,j);
+				dists(j,i) = dists(i,j);        
+			}
+		}
+	}
+	return dijkstra(dists, start, n, finish);  
 }
