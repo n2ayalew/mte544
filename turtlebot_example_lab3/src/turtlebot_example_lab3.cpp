@@ -26,7 +26,15 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+
+typedef struct pose {
+	double x;
+	double y;
+	double theta;
+} pose_t;
+
 #include "shortestpath.cpp"
+//#include "carrot_controller.cpp"
 
 /** Example usage of std::normal_distribution
 #define MEAN 10.0
@@ -40,15 +48,11 @@ double number = distribution(generator); //get random number
 #define TAGID 0
 #define NUM_SAMPLES 1000
 #define OCCUPIED_THRESHOLD 1
-#define NEAREST_MS 8
+#define NEAREST_MS 40
 
 using namespace Eigen;
 
-typedef struct pose {
-	double x;
-	double y;
-	double theta;
-} pose_t;
+
 
 typedef struct mapData {
 	float res;
@@ -60,6 +64,8 @@ typedef struct mapData {
 } mapData_t;
 
 ros::Publisher marker_pub;
+geometry_msgs::Twist vel;
+
 bool mapRecieved = false;
 char **occupancyGrid; // map represented as occupancy probabilities between 0-100
 //std::vector<std::vector<unsigned char>> edges; // unwieghted graph
@@ -79,7 +85,9 @@ pose_t wp3 = {8.0, 0.0, -1.57};
 //bool edge_collision(int x0, int y0, int x1, int y1);
 bool edge_collision(double x0, double y0, double x1, double y1);
 void bresenham(int x0, int y0, int x1, int y1, std::vector<int> &x, std::vector<int> &y);
+void point_publisher();
 std::vector<int> shortestpath(MatrixXi edges, int start, int finish);
+void carrot_controller(ros::Publisher velocity_publisher, int n, std::vector<pose_t> W, std::vector<int>sp, ros::Rate loop_rate); //n is number of waypoints
 
 short sgn(int x) { return x >= 0 ? 1 : -1; }
 double getDist(double x0, double y0, double x1, double y1) {return std::sqrt( std::pow(y1-y0,2) + pow(x1-x0,2));}
@@ -96,44 +104,82 @@ void pose_callback(const geometry_msgs::PoseWithCovarianceStamped & msg)
 	X << x, y, yaw;
 }
 
-//Example of drawing a curve
-void drawCurve(int k) 
+void drawShortPath(double x0, double y0, double x1, double y1) 
 {
-   // Curves are drawn as a series of stright lines
-   // Simply sample your curves into a series of points
+	// Curves are drawn as a series of stright lines
+	// Simply sample your curves into a series of points
+	// ROS_INFO_STREAM("CURVES DRAWWW");
+	double x = 0;
+	double y = 0;
+	double steps = 25;
+	static int counter = 0;
+	visualization_msgs::Marker lines;
+	lines.header.frame_id = "/map";
+	lines.id = counter; counter++; //each curve must have a unique id or you will overwrite an old ones
+	lines.type = visualization_msgs::Marker::LINE_STRIP;
+	lines.action = visualization_msgs::Marker::ADD;
+	lines.ns = "curves";
+	lines.scale.x = 0.1;
+	lines.color.r = 0.5;
+	lines.color.b = 0.0;
+	lines.color.g = 1.0;
+	lines.color.a = 1.0;
 
-   double x = 0;
-   double y = 0;
-   double steps = 50;
+	geometry_msgs::Point p1;
+	p1.x = x0;
+	p1.y = y0;
+	p1.z = 0;
+	geometry_msgs::Point p3;
+	p3.x = x1;
+	p3.y = y1;
+	p3.z = 0;
 
-   visualization_msgs::Marker lines;
-   lines.header.frame_id = "/map";
-   lines.id = k; //each curve must have a unique id or you will overwrite an old ones
-   lines.type = visualization_msgs::Marker::LINE_STRIP;
-   lines.action = visualization_msgs::Marker::ADD;
-   lines.ns = "curves";
-   lines.scale.x = 0.1;
-   lines.color.r = 1.0;
-   lines.color.b = 0.2*k;
-   lines.color.a = 1.0;
+	lines.points.push_back(p1);
+	lines.points.push_back(p3);
 
-   //generate curve points
-   for(int i = 0; i < steps; i++) {
-       geometry_msgs::Point p;
-       p.x = x;
-       p.y = y;
-       p.z = 0; //not used
-       lines.points.push_back(p); 
-
-       //curve model
-       x = x+0.1;
-       y = sin(0.1*i*k);   
-   }
-
-   //publish new curve
-   marker_pub.publish(lines);
+	//publish new curve
+	marker_pub.publish(lines);
 
 }
+
+void drawCurve(double x0, double y0, double x1, double y1) 
+{
+	// Curves are drawn as a series of stright lines
+	// Simply sample your curves into a series of points
+	// ROS_INFO_STREAM("CURVES DRAWWW");
+	double x = 0;
+	double y = 0;
+	double steps = 25;
+	static int counter = 0;
+	visualization_msgs::Marker lines;
+	lines.header.frame_id = "/map";
+	lines.id = counter; counter++; //each curve must have a unique id or you will overwrite an old ones
+	lines.type = visualization_msgs::Marker::LINE_STRIP;
+	lines.action = visualization_msgs::Marker::ADD;
+	lines.ns = "curves";
+	lines.scale.x = 0.03;
+	lines.color.r = 0.2;
+	lines.color.b = 1.0;
+	lines.color.a = 1.0;
+
+	geometry_msgs::Point p1;
+	p1.x = x0;
+	p1.y = y0;
+	p1.z = 0;
+	geometry_msgs::Point p3;
+	p3.x = x1;
+	p3.y = y1;
+	p3.z = 0;
+
+	lines.points.push_back(p1);
+	lines.points.push_back(p3);
+
+	//publish new curve
+	marker_pub.publish(lines);
+
+}
+
+
 
 //Callback function for the map
 void map_callback(const nav_msgs::OccupancyGrid& msg)
@@ -155,6 +201,34 @@ void map_callback(const nav_msgs::OccupancyGrid& msg)
 	}
 
 	mapRecieved = true;
+}
+
+void drawPoints() {
+
+	visualization_msgs::Marker points;
+	points.header.stamp = ros::Time::now();
+	points.header.frame_id = "/map";
+	points.ns = "milestones";
+	points.action = visualization_msgs::Marker::ADD;
+	points.id = 0;
+	points.type = visualization_msgs::Marker::POINTS;
+	points.pose.orientation.w = 1.0;
+	points.scale.x = 0.07;
+	points.scale.y = 0.07;
+	//points.color.g = 1.0f;
+	points.color.g = 0.2;
+	points.color.b = 0.5;
+	points.color.r = 1.0;
+	points.color.a = 1.0;
+
+	geometry_msgs::Point p;
+	for (int j = 0; j < milestones.size(); j++) {
+		p.x = milestones[j].x;
+		p.y = milestones[j].y;
+		p.z = 0;
+		points.points.push_back(p);
+	}
+	marker_pub.publish(points);
 }
 
 void prm(ros::Rate &loop_rate) {
@@ -187,12 +261,14 @@ void prm(ros::Rate &loop_rate) {
 		if (!occupancyGrid[ySample][xSample]) {
 			auto tfY = (double)((ySample + mapInfo.origin.y/mapInfo.res) * mapInfo.res); 
 			auto tfX = (double)((xSample + mapInfo.origin.x/mapInfo.res) * mapInfo.res); 
+			
 			milestones.push_back({tfX, tfY, 0});
 		}
 	}
 
 	ROS_INFO_STREAM("Number of milestone: " << milestones.size() << "\n");
 
+	drawPoints();
 	/**
 	 * nnHeap vector
 	 *
@@ -235,8 +311,9 @@ void prm(ros::Rate &loop_rate) {
 		for (auto j = 0; j < nnHeap.size(); j++) {
 			if ((i < nnHeap[j].second) ) {
 				if (!(edge_collision(milestones[i].x, milestones[i].y, milestones[nnHeap[j].second].x, milestones[nnHeap[j].second].y) ) ) {
-					edges(i, j) = 1;
-					edges(j, i) = 1;	
+					edges(i, nnHeap[j].second) = 1;
+					edges(nnHeap[j].second, i) = 1;	
+					//drawCurve(milestones[i].x, milestones[i].y, milestones[nnHeap[j].second].x, milestones[nnHeap[j].second].y);
 				}
 			}	
 		}
@@ -256,6 +333,7 @@ void prm(ros::Rate &loop_rate) {
 	for (auto i = 0; i < sp.size(); i++) {
 		ROS_INFO_STREAM(sp[i] << ", ");
 	}
+	point_publisher();
 	//ROS_INFO_STREAM("\n");
 }
 
@@ -263,7 +341,7 @@ void point_publisher() {
 	visualization_msgs::Marker points;
 	points.header.stamp = ros::Time::now();
 	points.header.frame_id = "/map";
-	points.ns = "milestones";
+	points.ns = "shortest_path";
 	points.action = visualization_msgs::Marker::ADD;
 	points.id = 0;
 	points.type = visualization_msgs::Marker::POINTS;
@@ -280,6 +358,12 @@ void point_publisher() {
 		p.z = 0;
 		points.points.push_back(p);
 	}
+	
+	for (int i = 0; i < sp.size()-1; ++i)
+	{
+		drawShortPath(milestones[sp[i]].x, milestones[sp[i]].y, milestones[sp[i+1]].x, milestones[sp[i+1]].y);
+	}
+
 	marker_pub.publish(points);
 }
 
@@ -292,7 +376,6 @@ int main(int argc, char **argv)
     //Subscribe to the desired topics and assign callbacks
     ros::Subscriber map_sub = n.subscribe("/map", 1, map_callback);
     ros::Subscriber pose_sub = n.subscribe("/indoor_pos", 1, pose_callback);
-
     //Setup topics to Publish from this node
     ros::Publisher velocity_publisher = n.advertise<geometry_msgs::Twist>("/cmd_vel_mux/input/navi", 1);
     marker_pub = n.advertise<visualization_msgs::Marker>("visualization_marker", 1, true);
@@ -308,16 +391,17 @@ int main(int argc, char **argv)
     while (ros::ok())
     {
     	loop_rate.sleep(); //Maintain the loop rate
-    	ros::spinOnce();   //Check for new messages
+    	//ros::spinOnce();   //Check for new messages
 
 
 		// Comment this line out if you don't want milestones showing on Rviz
-		point_publisher();
 
+		carrot_controller(velocity_publisher, sp.size(), milestones, sp, loop_rate);
+		break;
 		//Draw Curves
-        drawCurve(1);
-        drawCurve(2);
-        drawCurve(4);
+        //drawCurve(1);
+        //drawCurve(2);
+        //drawCurve(4);
     
     	//Main loop code goes here:
     	//vel.linear.x = 0.1; // set linear speed
@@ -414,4 +498,78 @@ std::vector<int> shortestpath(MatrixXi edges, int start, int finish){
 		}
 	}
 	return dijkstra(dists, start, n, finish);  
+}
+
+void carrot_controller(ros::Publisher velocity_publisher, int n, std::vector<pose_t> W, std::vector<int>sp, ros::Rate loop_rate) { //n is number of waypoints
+  //Constants
+  double Kp = 0.9; 
+  double zeta = 2.0; 
+  double L = 0.25; // threshold radius for waypoints 
+
+  // Waypoint constants
+/*  
+  MatrixXd W(4,3);
+  W(0,0) = X(0);
+  W(0,1) = X(1);
+  W(0,2) = X(2); 
+  W(1,0) = 4.0; 
+  W(1,1) = 0.0; 
+  W(1,2) = 0.0;
+  W(2,0) = 8.0; 
+  W(2,1) = -4.0;
+  W(2,2) = 3.14;
+  W(3,0) = 8.0;
+  W(3,1) = 0.0;
+  W(3,2) = -1.57; 
+*/
+  double lin_speed = 0.5; // linear speed m/s
+
+  ros::spinOnce();
+  ROS_INFO("Initial X Position: %f, Initial Y Position: %f", X(0), X(1));
+  ROS_INFO("Size of Path: %d",sp.size()); 
+  //Loop through waypoints
+  for (int i = 0; i < n-1; i++) {
+    //double cur_waypt_x = W(i,0); // waypoint that robot has already passed
+    //double cur_waypt_y = W(i,1);
+    //double next_waypt_x = W(i+1,0); // waypoint that robot is travelling to 
+    //double next_waypt_y = W(i+1,1);
+	double cur_waypt_x = W[sp[i]].x;// waypoint that robot has already passed
+    double cur_waypt_y = W[sp[i]].y;
+    double next_waypt_x = W[sp[i+1]].x; // waypoint that robot is travelling to 
+    double next_waypt_y = W[sp[i+1]].y;
+
+    // Continue until 
+    while (!(fabs(X(0)-next_waypt_x) < L && fabs(X(1)-next_waypt_y) < L) ) {
+      double ru = sqrt( pow(cur_waypt_x-X(0),2) + pow(cur_waypt_y-X(1),2)); // norm of vector 
+      double ang = atan2(next_waypt_y-cur_waypt_y,next_waypt_x-cur_waypt_x); // angle between waypoints
+      double angu = atan2(X(1)-cur_waypt_y, X(0)-cur_waypt_x); // angle between robot and waypoint that robot has passed 
+      double beta = ang-angu; 
+
+      double r = sqrt(pow(ru,2) - pow(ru*sin(beta),2)); 
+      double x_prime = (r+zeta)*cos(ang) + cur_waypt_x; // x-coordinate of carrot 
+      double y_prime = (r+zeta)*sin(ang) + cur_waypt_y; // y-coordinate of carrot 
+
+      double steer_des = atan2(y_prime-X(1), x_prime-X(0));
+      double error = steer_des - X(2); 
+
+      if (error < -M_PI)
+        error += 2*M_PI; 
+      else if (error > M_PI)
+        error -= 2*M_PI; 
+
+      double u = Kp*error;
+      vel.linear.x = lin_speed; 
+      vel.angular.z = u; 
+
+      velocity_publisher.publish(vel);
+		loop_rate.sleep(); //Maintain the loop rate
+      ros::spinOnce(); 
+    }
+    ROS_INFO("Current X Position: %f", X(0));
+    ROS_INFO("Current Y Position: %f", X(1));
+    vel.linear.x = 0; 
+    vel.angular.z = 0;
+    velocity_publisher.publish(vel);
+    ros::spinOnce();
+  }
 }
