@@ -14,36 +14,28 @@ using namespace Eigen;
 //Velocity control variable
 geometry_msgs::Twist vel;
 
-void carrot_controller(ros::Publisher velocity_publisher, int n) { //n is number of waypoints
+void carrot_controller(ros::Publisher velocity_publisher, int n, std::vector<pose_t> W, std::vector<int>sp, ros::Rate loop_rate) { //n is number of waypoints
   //Constants
-  double Kp = 0.9; 
-  double zeta = 2.0; 
-  double L = 0.25; // threshold radius for waypoints 
+  double Kp = 1; 
+  double zeta = 0.35; 
+  double L = 0.10; // threshold radius for waypoints 
 
   // Waypoint constants
-  MatrixXd W(4,3);
-  W(0,0) = X(0);
-  W(0,1) = X(1);
-  W(0,2) = X(2); 
-  W(1,0) = 4.0; 
-  W(1,1) = 0.0; 
-  W(1,2) = 0.0;
-  W(2,0) = 8.0; 
-  W(2,1) = -4.0;
-  W(2,2) = 3.14;
-  W(3,0) = 8.0;
-  W(3,1) = 0.0;
-  W(3,2) = -1.57; 
-
   double lin_speed = 0.3; // linear speed m/s
 
   ros::spinOnce();
-  //Loop through waypoints 
-  for (int i = 0; i < n-1; i++) {
-    double cur_waypt_x = W(i,0); // waypoint that robot has already passed
-    double cur_waypt_y = W(i,1);
-    double next_waypt_x = W(i+1,0); // waypoint that robot is travelling to 
-    double next_waypt_y = W(i+1,1);
+  ROS_INFO("Initial X Position: %f, Initial Y Position: %f", X(0), X(1));
+  ROS_INFO("Size of Path: %d",sp.size()); 
+  //Loop through waypoints
+  for (int i = 1; i < n-1; i++) {
+    //double cur_waypt_x = W(i,0); // waypoint that robot has already passed
+    //double cur_waypt_y = W(i,1);
+    //double next_waypt_x = W(i+1,0); // waypoint that robot is travelling to 
+    //double next_waypt_y = W(i+1,1);
+    double cur_waypt_x = W[sp[i]].x;// waypoint that robot has already passed
+    double cur_waypt_y = W[sp[i]].y;
+    double next_waypt_x = W[sp[i+1]].x; // waypoint that robot is travelling to 
+    double next_waypt_y = W[sp[i+1]].y;
 
     // Continue until 
     while (!(fabs(X(0)-next_waypt_x) < L && fabs(X(1)-next_waypt_y) < L) ) {
@@ -65,12 +57,19 @@ void carrot_controller(ros::Publisher velocity_publisher, int n) { //n is number
         error -= 2*M_PI; 
 
       double u = Kp*error;
-      vel.linear.x = lin_speed; 
+      // if (u > M_PI/2 || u < -M_PI/2)
+      //   lin_speed = 0;
+      if (fabs(u) > 0.075)
+        vel.linear.x = 0;
+      else
+        vel.linear.x = lin_speed; 
       vel.angular.z = u; 
 
       velocity_publisher.publish(vel);
-
-      ros::spinOnce(); 
+      loop_rate.sleep(); //Maintain the loop rate
+      // point_publisher();
+      ros::spinOnce();
+      lin_speed = 0.3; 
     }
     ROS_INFO("Current X Position: %f", X(0));
     ROS_INFO("Current Y Position: %f", X(1));
@@ -79,4 +78,4 @@ void carrot_controller(ros::Publisher velocity_publisher, int n) { //n is number
     velocity_publisher.publish(vel);
     ros::spinOnce();
   }
-} 
+}
