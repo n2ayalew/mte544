@@ -545,15 +545,15 @@ void carrot_controller(ros::Publisher velocity_publisher, int n, std::vector<pos
       double u = Kp*error;
       // if (u > M_PI/2 || u < -M_PI/2)
       //   lin_speed = 0;
-      if (u > 0.075)
+      if (fabs(u) > 0.075)
         vel.linear.x = 0;
       else
         vel.linear.x = lin_speed; 
       vel.angular.z = u; 
 
       velocity_publisher.publish(vel);
-      //loop_rate.sleep(); //Maintain the loop rate
-      point_publisher();
+      loop_rate.sleep(); //Maintain the loop rate
+      // point_publisher();
       ros::spinOnce();
       lin_speed = 0.3; 
     }
