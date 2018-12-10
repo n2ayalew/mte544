@@ -69,7 +69,7 @@ MatrixXd mapSamples; // random samples in map
 Vector3d X; // pose
 std::vector<pose_t> milestones;
 MatrixXd ms; // matrix for milestones
-VectorXd sp;
+std::vector<int> sp;
 
 // Hardcoded waypoints
 pose_t wp1 = {4.0, 0.0, 0.0};
@@ -79,7 +79,7 @@ pose_t wp3 = {8.0, 0.0, -1.57};
 //bool edge_collision(int x0, int y0, int x1, int y1);
 bool edge_collision(double x0, double y0, double x1, double y1);
 void bresenham(int x0, int y0, int x1, int y1, std::vector<int> &x, std::vector<int> &y);
-VectorXd shortestpath(MatrixXi edges, int start, int finish);
+std::vector<int> shortestpath(MatrixXi edges, int start, int finish);
 
 short sgn(int x) { return x >= 0 ? 1 : -1; }
 double getDist(double x0, double y0, double x1, double y1) {return std::sqrt( std::pow(y1-y0,2) + pow(x1-x0,2));}
@@ -247,13 +247,16 @@ void prm(ros::Rate &loop_rate) {
 	auto sp1 = shortestpath(edges, 0, 1);
 	auto sp2 = shortestpath(edges, 1, 2);
 	auto sp3 = shortestpath(edges, 2, 3);
-	sp = VectorXd::Zero(sp1.rows()+ sp2.rows()+ sp3.rows());
-	sp << sp1, sp2, sp3;
+	sp.reserve(sp1.size()+sp2.size()+sp3.size());
+	sp.insert(sp.end(), sp1.begin(), sp1.end());
+	sp.insert(sp.end(), sp2.begin(), sp2.end());
+	sp.insert(sp.end(), sp3.begin(), sp3.end());
+	sp.push_back(3);
 	ROS_INFO_STREAM("Final Path: ");
-	for (auto i = 0; i < sp.rows(); i++) {
-		ROS_INFO_STREAM(sp(i) << ", ");
+	for (auto i = 0; i < sp.size(); i++) {
+		ROS_INFO_STREAM(sp[i] << ", ");
 	}
-	ROS_INFO_STREAM("\n");
+	//ROS_INFO_STREAM("\n");
 }
 
 void point_publisher() {
@@ -271,9 +274,9 @@ void point_publisher() {
 	points.color.a = 1.0;
 
 	geometry_msgs::Point p;
-	for (int j = 0; j < milestones.size(); j++) {
-		p.x = milestones[j].x;
-		p.y = milestones[j].y;
+	for (int j = 0; j < sp.size(); j++) {
+		p.x = milestones[sp[j]].x;
+		p.y = milestones[sp[j]].y;
 		p.z = 0;
 		points.points.push_back(p);
 	}
@@ -397,10 +400,10 @@ void bresenham(int x0, int y0, int x1, int y1, std::vector<int> &x, std::vector<
     }
 }
 
-VectorXd shortestpath(MatrixXi edges, int start, int finish){
+std::vector<int> shortestpath(MatrixXi edges, int start, int finish){
 	//int n = nodes.rows();
 	auto n = milestones.size();
-	MatrixXd dists = VectorXd::Zero(n,n);
+	MatrixXd dists = MatrixXd::Zero(n,n);
 	int count = 0;
 	for(int i = 0; i < n; i++){
 		for(int j = i; j < n; j++){ 

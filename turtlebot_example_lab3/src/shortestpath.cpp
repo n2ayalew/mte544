@@ -9,7 +9,7 @@
 #include <eigen3/Eigen/Dense>
 #include <cmath>
 
-ros::Publisher marker_pub;
+//ros::Publisher marker_pub;
 
 using namespace Eigen;
 
@@ -67,19 +67,20 @@ int printSolution(int dist[], int n, VectorXd parent, int src)
 } 
 
 //
-void path_store(VectorXd &parent, VectorXd &path, int j, int index) {
+void path_store(VectorXd &parent, std::vector<int> &path, int j) {
   if (parent(j) == -1) {
-    return;
+	  return;
   }
-  path_store(parent, path, parent(j), index);
-  path(index) = parent(j);
-  ROS_INFO("Index: %d", index);
-  ROS_INFO("%f ", path(index));
+  path_store(parent, path, parent(j));
+  path.push_back(parent(j));
+  //ROS_INFO("Index: %d", index);
+  //ROS_INFO("%f ", path(index));
+
 }
 
-VectorXd dijkstra(MatrixXd graph, int src, int n) 
+std::vector<int> dijkstra(MatrixXd graph, int src, int n, int finish) 
 { 
-  int j = 0;
+  int j = finish;
     // The output array. dist[i] will hold the shortest distance from src to i 
     int dist[n];  
   
@@ -87,12 +88,12 @@ VectorXd dijkstra(MatrixXd graph, int src, int n)
     bool sptSet[n]; 
   
     // Parent array to store shortest path tree 
-    VectorXd parent(n);   
-    VectorXd path(n);
-  
+    VectorXd parent = VectorXd::Zero(n);   
+	std::vector<int> path;// = VectorXd::Zero(n);
+
     // Initialize all distances as INFINITE and stpSet[] as false
     parent(src) = -1; 
-    ROS_INFO("src: %f", parent(1));
+    //ROS_INFO("src: %f", parent(1));
     for (int i = 0; i < n; i++) 
     { 
         dist[i] = INT_MAX; 
@@ -106,7 +107,7 @@ VectorXd dijkstra(MatrixXd graph, int src, int n)
         // Pick the minimum distance vertex from the set of vertices not yet processed.  
         // u is always equal to src in first iteration. 
         int u = minDistance(dist, sptSet, n);
-        ROS_INFO("#: %d u: %d", count,u); 
+        //ROS_INFO("#: %d u: %d", count,u); 
   
         // Mark the picked vertex as processed 
         sptSet[u] = true; 
@@ -122,8 +123,8 @@ VectorXd dijkstra(MatrixXd graph, int src, int n)
         }
     } 
   
-  for (int i = 0; i < n; i++) 
-    ROS_INFO("Parent #: %d, Parent: %f", i, parent(i));
+  //for (int i = 0; i < n; i++) 
+   // ROS_INFO("Parent #: %d, Parent: %f", i, parent(i));
 
   // while(parent(j) != -1 && index < n) { 
   //   path(index) = parent(j);
@@ -132,16 +133,35 @@ VectorXd dijkstra(MatrixXd graph, int src, int n)
   //   index++;
   // }
 
-  int path_index = 0;
-  for (int i = 1; i < n; i++) {
-    path_store(parent,path,i,path_index);
+//  int path_index = 0;
+//  for (int i = 1; i < n; i++) {
+    path_store(parent,path,j);
     // ROS_INFO("%d -> %d \t %d\t\t%d ", src, i, dist[i], src);
-    ROS_INFO("Path Index: %d, Path: %f", path_index, path(path_index));
-    path_index++;
-  }
+    //ROS_INFO("Path Index: %d, Path: %f", path_index, path(path_index));
+//    path_index++;
+//  }
 
   // printSolution(dist, n, parent, src); 
-  return path;
+//  path.push_back(finish);
+	return path;
+}
+
+/*
+VectorXd shortestpath(MatrixXi edges, int start, int finish){
+	//int n = nodes.rows();
+	auto n = milestones.size();
+	MatrixXd dists(n,n);
+	int count = 0;
+	for(int i = 0; i < n; i++){
+		for(int j = i; j < n; j++){ 
+			if (edges(i,j)) {
+				ROS_INFO_STREAM(
+				dists(i,j) = getDist(milestones[i], milestones[j]); //len(nodes,i,j);
+				dists(j,i) = dists(i,j);        
+			}
+		}
+	}
+	return dijkstra(dists, start, n, finish);  
 }
 
 VectorXd shortestpath(MatrixXd nodes, MatrixXd edges, int start, int finish){
@@ -152,9 +172,9 @@ VectorXd shortestpath(MatrixXd nodes, MatrixXd edges, int start, int finish){
     for(int j = i; j < n; j++){ 
       if (edges(i,j)) {
         dists(i,j) = len(nodes,i,j);
-        dists(j,i) = dists(i,j);        
+        dists(j,i) = dists(i,j);
       }
     }
   }
   return dijkstra(dists, 0, n);  
-} 
+} */
